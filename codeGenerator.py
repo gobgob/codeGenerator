@@ -8,50 +8,45 @@ class Attribute(object):
 		self.octet = octet
 
 class Function(object):
-	def __init__(self, name, type, attributes, octet=0):
+	def __init__(self, name="", type="", attributes=[]):
 		super(Function, self).__init__()
 		self.name = name
 		self.type = type
 		self.attributes = attributes
-		self.octet = octet
+
 
 # Read a file
 file = open("input.py", "r")
 input = file.readlines()
 
 functions = []
-attributes = []
-
+new_function = None
 
 for line in input:
 	# Parse tags
 	if re.match(r"^#\ @(\w+)", line):
-		tag = re.match(r"^#\ @(\w+)", line).groups()[0]
+		words=line.split();
+		tag=words[1]
 
-		if tag == "method":
-			function_name = re.match(r"^#\ @method\ (\w+)", line).groups()[0]
+		if tag == "@method":
+			if new_function!=None :
+				functions.append(new_function)
+				new_function = None
+			new_function=Function()
+			new_function.name = words[2]
 
-		elif tag == "type":
-			function_type = re.match(r"^#\ @type\ (\w+)", line).groups()[0]
+		elif tag == "@type":
+			new_function.type = words[2]
 
-		elif tag == "param":
-			type = re.match(r"^#\ @param\ ([a-z0-9 ]+) ([a-z_]+)$", line).groups()[0]
-			name = re.match(r"^#\ @param\ ([a-z0-9 ]+) ([a-z_]+)$", line).groups()[1]
-			if re.search(r"([0-9]+)", line):
-				octet = int(re.search(r"([0-9]+)", line).groups()[0]) / 8
+		elif tag == "@param":
+			type = words[2]
+			name = words[-1]
+			octet = words[-2]
+			new_function.attributes.append(Attribute(type, name, octet))
 
-			attributes.append(Attribute(type, name, octet))
-
-	# End of function definition
-	elif line == "\n":
-		octet = 0
-		for attribute in attributes:
-			octet += attribute.octet # Octet sum for getter definition
-
-		functions.append(Function(function_name, function_type, attributes, octet))
-		attributes = []
-		function_name = ""
-		function_type = ""
+if new_function!=None :
+	functions.append(new_function)
+	new_function = None
 
 
 # Write a file
