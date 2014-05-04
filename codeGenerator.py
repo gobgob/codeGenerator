@@ -21,6 +21,12 @@ class Function(object):
 			res+=int(attribute.size)
 		return res
 
+class Flag(object):
+	def __init__(self, name, value):
+		self.name = name
+		self.value = value
+
+
 
 def parseFile(filename):
 	# Read a file
@@ -30,6 +36,7 @@ def parseFile(filename):
 	print("Parsing "+filename)
 
 	functions = []
+	flags = []
 	new_function = None
 
 	for line in input:
@@ -55,11 +62,17 @@ def parseFile(filename):
 				size = int(words[-2])
 				new_function.attributes.append(Attribute(type, name, size))
 
+			elif tag == "@flag":
+				name = words[2]
+				value = words[3]
+				flags.append(Flag(name, value));
+
 	if new_function!=None :
 		functions.append(new_function)
 		new_function = None
 
-	return functions
+	return functions, flags
+
 
 def generatePython(filename,functions):
 
@@ -102,7 +115,7 @@ def generatePython(filename,functions):
 			output += "	res=0\n"
 			offset = 0
 			for attribute in function.attributes:
-				output += "	" +attribute.name + "=make_" + attribute.type.replace(" ", "_") + "(vals," + str(offset) + ")\n"
+				output += "	" +attribute.name + "=make_" + attribute.type + "_"+ str(attribute.size) + "(vals," + str(offset) + ")\n"
 				offset += attribute.size
 			output += "	return "
 			for attribute in function.attributes:
@@ -119,6 +132,97 @@ def generatePython(filename,functions):
 	file.write(output)
 	file.close
 
+def generateIno(filename,functions):
 
-functions = parseFile(sys.argv[1])
-generatePython(sys.argv[2],functions)
+	print("Generating arduino/c code "+filename)
+
+	# Write a file
+	output = ""
+	output += "#include \"proxi2c_generated.h\"\n\n"
+	# I2C Register
+	output += "enum i2c_registers\n"
+	output += "{\n"
+	i = 1
+	for function in functions:
+		output += "	REG_" + function.name.upper() + "=" + str(i) + ",\n"
+		i += 1
+	output += "};\n\n"
+
+	output +="void i2c_runCmd(int i2c_reg,uint8_t * data)\n"
+	output +="{\n"
+
+	output += "\tswitch(i2c_reg) {\n"
+
+	for function in functions:
+		output += "\t\tcase REG_" + function.name.upper() + " :\n"
+		if function.type == "setter":
+			output += "\t\t\tcmd_"+function.name+"( \n"
+			offset=0
+			for attribute in function.attributes:
+
+				the_type=attribute.type
+				the_type=the_type.replace("integer","INT")
+				the_type=the_type.replace("bool","INT")
+
+				output += "\t\t\tMAKE" + the_type.upper() + str(attribute.size) + "T("
+				for i in range(0,int((attribute.size)/8)):
+					output += "data["+str(offset)+"],"
+					offset+=1
+				output = output[:-1]
+				output += "),\n"
+
+			output = output[:-2] # Remove the last character
+			output += " \n"
+				# //offset += attribute.size
+
+			output += "\t\t\t);\n"
+		output += "\t\tbreak;\n"
+	output += "\t};\n"
+	output += "};\n"
+	#  Write a file
+	file = open(filename, "w")
+	file.write(output)
+	file.close
+
+def generateHeader(filename,functions,flags):
+
+	print("Generating arduino/header code "+filename)
+
+	# Write a file
+	output = ""
+
+	output +="void i2c_runCmd(int i2c_reg,uint8_t * data);\n"
+	for function in functions:
+		if function.type == "setter":
+			output += "void cmd_"+function.name+"("
+			for attribute in function.attributes:
+				the_type=attribute.type
+				the_type=the_type.replace("integer","int")
+				the_type=the_type.replace("bool","int")
+
+				output += the_type + str(attribute.size) + "_t "+attribute.name+","
+			output = output[:-1]
+			output += ");\n"
+
+	output += "\n"
+	for flag in flags:
+		output += "#define "+flag.name+" "+flag.value+"\n"
+
+	#  Write a file
+	file = open(filename, "w")
+	file.write(output)
+	file.close
+
+
+
+functions,flags = parseFile(sys.argv[1])
+
+out_file = sys.argv[2]
+
+if out_file.find(".py")>0:
+	generatePython(out_file,functions)
+elif out_file.find(".ino")>0:
+	generateIno(out_file,functions)
+	generateHeader(out_file.replace(".ino",".h"),functions,flags)
+else:
+	print("unsupported output file format")
