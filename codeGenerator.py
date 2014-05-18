@@ -107,17 +107,18 @@ def generatePython(filename,functions):
 			for attribute in function.attributes:
 				output += "	vals.extend(split_" + attribute.type + "_"+ str(attribute.size) + "(" + attribute.name + "))\n"
 
-			output += "	self.bus.write_block_data(address,i2c_registers['REG_" + function.name.upper() +"'],vals)\n\n"
+			output += "	self.bus.write_block_data(self.address,self.i2c_registers['REG_" + function.name.upper() +"'],vals)\n\n"
 
 		elif function.type == "getter":
 			output += "):\n"
-			output += "	vals=self.bus.read_i2c_block_data(address,i2c_registers['REG_" + function.name.upper() + "']," + str( int(function.getAttributesLen()) ) + ")\n"
+			output += "	vals=self.readBlock(self.i2c_registers['REG_" + function.name.upper() + "']," + str( 1+int(function.getAttributesLen()/8) ) + ")\n"
+			# output += "	vals=self.bus.read_i2c_block_data(self.address,self.i2c_registers['REG_" + function.name.upper() + "']," + str( 1+int(function.getAttributesLen()/8) ) + ")\n"
 			output += "	res=0\n"
 			offset = 0
 			for attribute in function.attributes:
-				output += "	" +attribute.name + "=make_" + attribute.type + "_"+ str(attribute.size) + "(vals," + str(offset) + ")\n"
+				output += "	" +attribute.name + "=make_" + attribute.type + "_"+ str(attribute.size) + "(vals," + str(int(offset/8)) + ")\n"
 				offset += attribute.size
-			output += "	return "
+			output += "	return res,"
 			for attribute in function.attributes:
 				output += attribute.name + ","
 			output = output[:-1] # Remove the last character
@@ -131,6 +132,13 @@ def generatePython(filename,functions):
 	file = open(filename, "w")
 	file.write(output)
 	file.close
+
+
+def typsize2c(type,size):
+	the_type=type
+	the_type=the_type.replace("integer","int"+str(size)+"_t")
+	the_type=the_type.replace("bool","int"+str(size)+"_t")
+	return the_type
 
 def generateIno(filename,functions):
 
@@ -148,25 +156,23 @@ def generateIno(filename,functions):
 		i += 1
 	output += "};\n\n"
 
-	output +="void i2c_runCmd(int i2c_reg,uint8_t * data)\n"
+	output +="void i2c_runCmd(int i2c_reg,uint8_t * data_in,uint8_t * data_out,uint8_t * data_out_len)\n"
 	output +="{\n"
 
 	output += "\tswitch(i2c_reg) {\n"
 
 	for function in functions:
 		output += "\t\tcase REG_" + function.name.upper() + " :\n"
+		# output +="Serial.println(\"cmd_"+function.name+"\");\n"
 		if function.type == "setter":
 			output += "\t\t\tcmd_"+function.name+"( \n"
 			offset=0
 			for attribute in function.attributes:
+				the_type=typsize2c(attribute.type,attribute.size)
 
-				the_type=attribute.type
-				the_type=the_type.replace("integer","INT")
-				the_type=the_type.replace("bool","INT")
-
-				output += "\t\t\tMAKE" + the_type.upper() + str(attribute.size) + "T("
+				output += "\t\t\tMAKE" + the_type.upper()+"("
 				for i in range(0,int((attribute.size)/8)):
-					output += "data["+str(offset)+"],"
+					output += "data_in["+str(offset)+"],"
 					offset+=1
 				output = output[:-1]
 				output += "),\n"
@@ -176,6 +182,30 @@ def generateIno(filename,functions):
 				# //offset += attribute.size
 
 			output += "\t\t\t);\n"
+
+		elif function.type == "getter":
+			names=[]
+			for attribute in function.attributes:
+				the_type=typsize2c(attribute.type,attribute.size)
+				names.append("ret_"+function.name+"_"+attribute.name)
+				output += "\t\t\t"+the_type+" "+names[-1]+";\n"
+
+			output += "\t\t\tcmd_"+function.name+"( \n"
+			for name in names:
+				output += "\t\t\t\t&"+name+",\n"
+			output = output[:-2]
+			output += "\n\t\t\t);\n"
+			offset=0
+			# output+="uint8_t "+ function.name+"_out[256];\n"
+			i=0;
+			for attribute in function.attributes:
+				the_type=typsize2c(attribute.type,attribute.size)
+				output += "\t\t\tSPLIT" + the_type.upper()+"("+names[i]+",data_out,"+str(offset)+");\n"
+				# output += "\t\t\tSPLIT" + the_type.upper()+"("+names[0]+","+function.name+"_out,"+str(offset)+");\n"
+				offset+=int(attribute.size/8)
+				i+=1
+			output+="\t\t\t*data_out_len = "+str(offset)+";\n"
+			# output+="Wire.write("+ function.name+"_out,"+str(offset)+");\n";
 		output += "\t\tbreak;\n"
 	output += "\t};\n"
 	output += "};\n"
@@ -191,19 +221,17 @@ def generateHeader(filename,functions,flags):
 	# Write a file
 	output = ""
 
-	output +="void i2c_runCmd(int i2c_reg,uint8_t * data);\n"
+	output +="void i2c_runCmd(int i2c_reg,uint8_t * data_in,uint8_t * data_out,uint8_t * data_out_len);\n"
 	for function in functions:
-		if function.type == "setter":
-			output += "void cmd_"+function.name+"("
-			for attribute in function.attributes:
-				the_type=attribute.type
-				the_type=the_type.replace("integer","int")
-				the_type=the_type.replace("bool","int")
-
-				output += the_type + str(attribute.size) + "_t "+attribute.name+","
-			output = output[:-1]
-			output += ");\n"
-
+		output += "void cmd_"+function.name+"("
+		for attribute in function.attributes:
+			the_type=typsize2c(attribute.type,attribute.size)
+			if function.type == "setter":
+				output += the_type+" "+attribute.name+","
+			elif function.type == "getter":
+				output += the_type+"* "+attribute.name+","
+		output = output[:-1]
+		output += ");\n"
 	output += "\n"
 	for flag in flags:
 		output += "#define "+flag.name+" "+flag.value+"\n"
